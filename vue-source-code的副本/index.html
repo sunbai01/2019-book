@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>vue源码解读</title>
+</head>
+<body>
+    <div id="app"></div>
+<!-- <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/vue">
+</script> -->
+
+<script type="text/javascript">
+class Dep {
+    constructor(getter, callback){
+        // 都有谁，监听我了
+        this.subs = [] ;
+    } 
+    notify() {
+        const subs = this.subs.slice();
+        for(let i = 0,len =subs.length; i< len;i++) {
+            this.subs[i].update();
+        }
+    }
+    addSub(sub) {
+        if(this.subs.indexOf(sub) === -1){
+            this.subs.push(sub);
+        }
+    }
+
+    addDepend() {
+        Dep.targets[Dep.targets.length - 1].addDep(this);
+    }
+}
+
+Dep.targets = [];
+function pushTarget(instance){
+    // 众矢之地，接下来发生的所有依赖，都放在这个instance头上
+    Dep.targets.push(instance);
+
+}
+
+function popTarget(instance){
+   return Dep.targets.pop();
+
+}
+
+class Watcher {
+    constructor(getter, callback){
+        // 记了两个函数
+        this.callback = callback;
+        this.getter = getter;
+        this.value = this.get();
+    }
+    
+    get() {
+        // 记录一下我自己.第一次get的时候记一个全局变量
+        pushTarget(this);
+        let value = this.getter();
+        popTarget(this);
+        return value;
+    }
+    addDep(dep) {
+        dep.addSub(this);
+    }
+    update(){ 
+        let newVal = this.get();
+        this.value = newVal;
+    }
+}
+class Observer {
+    constructor(obj) {
+        this.walk(obj);
+    }
+
+    // 深度遍历walk上的每一层
+    walk(obj){
+        Object.keys(obj)
+            .forEach(key => {
+                if (typeof obj[key] === 'object' && obj[key] != null) {
+                    this.walk(obj[key]);
+                }
+                defineReative (obj, key, obj[key]);
+            });
+        return obj;
+    }
+
+}
+// new出来的vue实例
+// let app = new Vue({
+// 界面如何感知？
+// 这个工具代理函数做的事情是使：this.info = this._data.info，使dom元素能访问到变量
+// 代理方法，app下直接访问data数据,但是这个代理只代理一层
+ //改data中的 window.app.price 的时候走了代理，改window.app.infos.title 的时候没走代理，所以用了 defineReative
+function proxy(target, data, key){
+    Object.defineProperty(target, key, {
+        // 设置值到data上，也从data上取，实际上是通过target访问操作data
+        get() {
+            return data[key];
+        },
+        set(newVal){
+            console.log('set!!!!', newVal);
+            data[key] = newVal;
+        }
+    })
+}
+
+
+// 有区别,要做到代理每一层，区别在walk函数 1:35
+function defineReative (target, key, value) {
+    // 这是我
+    const dep = new Dep();
+    Object.defineProperty(target, key, {
+        // 设置值到data上，也从data上取，实际上是通过target访问操作data
+        get() {
+            console.log('get-recruit!!!!');
+
+            if(Dep.targets.length > 0){
+                dep.addDepend();
+            }
+            return value;
+        },
+        set(newVal){
+            console.log('set-recruit!!!!', newVal);
+            // 添加到window.watcher.depdencies.add(this)
+            // 通知刷新
+            value = newVal;
+            dep.notify();
+           
+        }
+    })
+
+}
+
+
+class Vue {
+    //  constructor 建造者
+    constructor(options) {
+            // 把dom查一下
+            this.$el = document.querySelector(options.el);
+            // 执行一下data，获取其中返回的数据
+            this._data =
+                options.data && options.data();
+                // () => {
+                //     console.log('变更数据')
+                //     this._update();
+                // }
+                //哪个属性变了都通知到位
+            new Observer(this._data);
+            // this._data = options.data && options.data();
+
+            this.render = options.render;
+            // 做代理
+            for(let key in this._data){
+                proxy(this, this._data, key)
+            }
+            // this._update();
+            // new 了一个watcher实例，传了两个函数.其中一个是回调函数，数据有变化的时候，被调一下
+            //
+            new Watcher(() => {
+                console.log('update');
+                this._update();
+            }, () => {
+                console.log('callback!!!!');
+            });
+            // 这个函数是update dom
+            
+    }
+  
+    // 创建一个元素
+    _createElement (tagName, data, children){
+        const tag = document.createElement(tagName);
+        // 从data里把attrs拿出来赋值给attrs，如果没有则赋为空值
+        const {attrs = {}} = data;
+        for (let attrName in attrs){
+            // 循环设置属性，不止一个
+            tag.setAttribute(attrName, attrs[attrName]);
+        }
+        if (Object.prototype.toString
+            .call(children) != '[object Array]'
+        ) {
+            let child = document.createTextNode(children);
+            tag.appendChild(child);
+        }
+        else {
+            // 循环dom对象
+            children.forEach(child => {
+                tag.appendChild(child);
+            });
+        }
+        console.log(tag);
+       return tag;
+    }
+    
+    _update() {
+        // 调用render函数，replace下el
+        const $root = this.render(this._createElement);
+        // 为什么是反的
+        console.log('root', $root);
+        console.log('this.$el', this.$el);
+        api.replaceChild(this.$el, $root);
+        this.$el = $root;
+
+    }
+}
+
+const api = {
+    //这个api干嘛用的，写个工具方法,这个 方法的作用是：把一个元素替换，这里把根元素替换成了我们生成的元素
+    replaceChild(oldElement, element){
+        // window.oldElement = oldElement;
+        return oldElement.parentNode.replaceChild(element, oldElement);
+    }
+}
+// window.app 导到了window上，render渲染了  <div title="猪肉的价格"><span>27</span></div>
+    window.app = new Vue({
+    el: '#app',
+    data (){
+        //这样每次创建都是一个新的对象
+        return {
+            price: '28',
+            infos: {
+                title: '猪肉的价格',
+                suface: {
+                    age: ''
+                },
+                placeholder: '猪肉的价格请在这里输入'
+            }
+        }
+    },
+    render(createElement) {
+        return createElement(
+            // targetName
+            'div', 
+            {
+                //div 的属性
+                attrs:{
+                    title: this.infos.title
+                }
+            },
+            //div 的孩子
+            [
+                //dom 元素，倒着看，这个参数是个函数，这个函数不执行完，这个参数就出不来。上面的createElement这个函数就没法执行
+                createElement(
+                    'span',
+                    {},
+                    //span 的孩子
+                    this.price
+                )
+            ]
+        );
+    }
+})
+</script>
+</body>
+</html>
